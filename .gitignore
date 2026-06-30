@@ -1,0 +1,22 @@
+# ─────────────────────────────────────────────────────────────
+# Personal data — NEVER publish. The panel stores everything here.
+# ─────────────────────────────────────────────────────────────
+panel/store/
+todo/
+personality/
+archive/
+
+# One-off data-migration scripts embed personal content
+# (loan notes, life-lesson imports, personal links). Keep only the
+# Project-manager menu script, which contains no personal data.
+panel/data/*
+!panel/data/add-projects-menu.js
+
+# Local Claude settings (machine-specific permission allowlist)
+.claude/settings.local.json
+
+# Editor / OS noise
+Thumbs.db
+.DS_Store
+*.swp
+node_modules/

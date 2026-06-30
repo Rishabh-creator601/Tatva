@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Tatva · Panel</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <aside class="side" id="side">
+    <div class="brand">Tatva <span class="dot">·</span> Panel</div>
+    <button class="quick" id="quickAdd">⚡ Quick add</button>
+    <button class="quickview" id="quickView">📥 Quick items <span class="ct" id="quickCt">0</span></button>
+    <div id="nav"></div>
+    <div class="foot">
+      <button class="toggle" id="themeBtn">🌙 Theme</button>
+    </div>
+  </aside>
+
+  <main class="main">
+    <div class="head">
+      <h1 id="catTitle"></h1>
+      <span class="pill" id="catPill"></span>
+    </div>
+    <div class="sub" id="catSub"></div>
+
+    <div class="bar">
+      <input id="search" placeholder="Search in this menu…" />
+      <button class="btn primary" id="addItem">+ Add entry</button>
+      <button class="btn" id="addGoals" style="display:none">+ Add goals</button>
+      <button class="btn primary" id="addImage" style="display:none">+ Add image</button>
+      <button class="btn" id="addLink" style="display:none">+ Add link</button>
+      <button class="btn" id="exportCat">⬇ Export</button>
+      <button class="btn" id="renCat">Rename menu</button>
+      <button class="btn danger" id="delCat">Delete menu</button>
+    </div>
+
+    <div id="content"></div>
+  </main>
+
+  <!-- item modal -->
+  <div class="modal" id="itemModal">
+    <div class="sheet">
+      <h2 id="itemModalTitle">Add entry</h2>
+      <div class="row">
+        <div>
+          <label>Menu (category)</label>
+          <select id="fCat"></select>
+        </div>
+        <div>
+          <label id="lblSection">Section</label>
+          <input id="fSection" list="sectionList" placeholder="e.g. Mantras / Notes" />
+          <datalist id="sectionList"></datalist>
+        </div>
+      </div>
+      <label id="lblTitle">Title</label>
+      <input id="fTitle" placeholder="Short title" />
+
+      <div id="grpLink" style="display:none">
+        <label>Main link</label>
+        <input id="fLink" placeholder="https://…" />
+        <label>Message</label>
+        <input id="fMessage" placeholder="What is it / short message" />
+        <label>Reason</label>
+        <input id="fReason" placeholder="Why you're saving it" />
+      </div>
+
+      <div id="grpBody">
+        <label>Body</label>
+        <textarea id="fBody" placeholder="Markdown-ish: **bold**, *italic*, `code`, - bullets, and - [ ] / - [x] checkboxes. Links auto-link."></textarea>
+      </div>
+
+      <label>Accent colour (optional)</label>
+      <div style="display:flex;gap:10px;align-items:center">
+        <input type="checkbox" id="fColorOn" style="width:auto" />
+        <input type="color" id="fColor" value="#7c9cff" style="width:54px;height:36px;padding:2px" />
+        <span class="hint" style="margin:0">Tick to override the menu colour (e.g. per Link-Manager tag).</span>
+      </div>
+      <div class="hint">Saved automatically to the local DB, with a backup. Organized under the menu + section you pick.</div>
+      <div class="actions">
+        <button class="btn" id="itemCancel">Cancel</button>
+        <button class="btn primary" id="itemSave">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- image modal (Subjects / Astrology) -->
+  <div class="modal" id="imgModal">
+    <div class="sheet">
+      <h2 id="imgModalTitle">Add image</h2>
+      <div class="row">
+        <div>
+          <label id="iSubjLabel">Subject</label>
+          <input id="iSubject" list="subjectList" placeholder="Astrology / Narx / Kalki… (blank = Instant)" />
+          <datalist id="subjectList"></datalist>
+        </div>
+        <div>
+          <label>Title (optional)</label>
+          <input id="iTitle" placeholder="short label" />
+        </div>
+      </div>
+      <div id="iAstroFields" style="display:none">
+        <div id="iLabelWrap"><label>Label</label><input id="iLabel" placeholder="label" /></div>
+        <label>Special message (optional)</label><input id="iMessage" placeholder="message / note shown on the item" />
+      </div>
+      <label>Files — images or .txt (multiple allowed; text shown as a card)</label>
+      <input type="file" id="iFile" accept="image/*,.txt,text/plain" multiple />
+      <label style="display:flex;align-items:center;gap:8px;margin-top:8px"><input type="checkbox" id="iFolder" style="width:auto" /> Import a whole folder (all images / .txt inside)</label>
+      <div style="display:flex;gap:18px;flex-wrap:wrap;margin-top:12px">
+        <label style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="iImportant" style="width:auto" /> Important (shown first)</label>
+        <label id="iMaterialWrap" style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="iMaterial" style="width:auto" /> Material (books/sources — collapsible)</label>
+      </div>
+      <div class="hint">Images are saved in <code>store/images/</code> — no backup. Blank subject = Instant.</div>
+      <div class="actions">
+        <button class="btn" id="imgCancel">Cancel</button>
+        <button class="btn primary" id="imgSave">Add</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- link modal (standard pages — adds to the page's "LINKS" carousel) -->
+  <div class="modal" id="linkModal">
+    <div class="sheet">
+      <h2 id="linkModalTitle">Add link</h2>
+      <div id="lCategoryWrap" style="display:none">
+        <label>Links category</label>
+        <input id="lCategory" list="lCategoryList" placeholder="e.g. ML, Career… (blank = General) → carousel “LINKS - …”" />
+        <datalist id="lCategoryList"></datalist>
+      </div>
+      <label>Link (URL)</label>
+      <input id="lLink" placeholder="https://…" />
+      <label>Label (optional)</label>
+      <input id="lLabel" placeholder="short label" />
+      <label>Message (optional)</label>
+      <input id="lMessage" placeholder="what it is / short note — searchable" />
+      <label>Reason (optional)</label>
+      <input id="lReason" placeholder="why you're saving it — searchable" />
+      <div class="hint">Lands in this page's <b>LINKS</b> carousel (links are kept separate from images & text).</div>
+      <div class="actions">
+        <button class="btn" id="linkCancel">Cancel</button>
+        <button class="btn primary" id="linkSave">Add link</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- goals modal (To-Do) -->
+  <div class="modal" id="goalsModal">
+    <div class="sheet">
+      <h2>Add goals</h2>
+      <div class="row">
+        <div>
+          <label>Type</label>
+          <select id="gType">
+            <option>Weekly</option><option>Monthly</option><option>One-time</option><option>Long-term</option>
+          </select>
+        </div>
+        <div>
+          <label>Accent colour</label>
+          <input type="color" id="gColor" value="#56d4a0" style="height:38px;padding:2px;width:100%" />
+        </div>
+      </div>
+      <div id="gWeekShorts" style="display:none">
+        <label>Week (Mon→Sun of this month)</label>
+        <div class="weekbtns">
+          <button type="button" class="wk" data-wk="1">Week 1</button>
+          <button type="button" class="wk" data-wk="2">Week 2</button>
+          <button type="button" class="wk" data-wk="3">Week 3</button>
+          <button type="button" class="wk" data-wk="4">Week 4</button>
+        </div>
+      </div>
+      <div id="gMonthRow" class="row" style="display:none">
+        <div><label>Month</label><select id="gMonth"></select></div>
+        <div><label>Year</label><select id="gYear"></select></div>
+      </div>
+      <div id="gDateRow" class="row" style="display:none">
+        <div><label>Start</label><input type="date" id="gStart" /></div>
+        <div><label>End</label><input type="date" id="gEnd" /></div>
+      </div>
+      <label>Tag / set name</label>
+      <input id="gTag" placeholder="e.g. Fitness, Week 24, Career…" />
+      <label>Goals — one per line OR comma-separated</label>
+      <textarea id="gGoals" placeholder="Resume, LinkedIn, Cooking&#10;— or —&#10;Resume&#10;LinkedIn&#10;Cooking"></textarea>
+      <label>…or upload a .txt file</label>
+      <input type="file" id="gFile" accept=".txt,text/plain" />
+      <div class="hint">Each goal becomes a checkbox; the entry shows a progress bar.</div>
+      <div class="actions">
+        <button class="btn" id="goalsCancel">Cancel</button>
+        <button class="btn primary" id="goalsSave">Add goals</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- lightbox (tap an image to view primary, background blurred) -->
+  <div class="lightbox" id="lightbox"><div class="lbinner" id="lbInner"></div></div>
+
+  <div class="toast" id="toast"></div>
+  <script src="app.js"></script>
+</body>
+</html>
