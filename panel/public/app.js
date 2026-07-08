@@ -32,7 +32,7 @@ async function save(immediate) {
     try {
       const r = await fetch("/api/db", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(db) });
       const j = await r.json();
-      if (j.ok) toast("Saved ✓ (backup made)"); else toast("Save error");
+      if (j.ok) { toast("Saved ✓ (backup made)"); maybeAutoSyncDrive(); } else toast("Save error");
     } catch (e) { toast("Save failed — is the server running?"); }
   };
   if (immediate) return doSave();
@@ -1282,5 +1282,140 @@ $("#linkSave").onclick = () => {
     showModal("linkModal", false); save(); render(); toast("Added to " + sec);
   }
 };
+
+/* ================= Google Drive sync (independent; server proxies the Drive API) ================= */
+let driveState = { configured: false, connected: false, email: null, lastSync: null };
+async function refreshDriveStatus() {
+  try { driveState = await fetch("/api/drive/status").then((r) => r.json()); } catch {}
+  paintDrive();
+  return driveState;
+}
+function paintDrive() {
+  const st = $("#driveStatus"); if (!st) return;
+  const conn = driveState.connected;
+  $("#driveConnected").style.display = conn ? "block" : "none";
+  $("#driveSetup").style.display = conn ? "none" : "block";
+  if (conn) {
+    const last = driveState.lastSync ? new Date(driveState.lastSync).toLocaleString() : "never";
+    st.innerHTML = `Connected as <b>${esc(driveState.email || "—")}</b><br><small>Last sync: ${esc(last)}</small>`;
+    st.className = "drivestatus ok";
+  } else {
+    st.textContent = driveState.configured ? "Credentials saved — click Connect to sign in." : "Not connected yet.";
+    st.className = "drivestatus";
+  }
+  const auto = $("#dAuto"); if (auto) auto.checked = !!(db.settings && db.settings.driveAutoSync);
+}
+$("#driveBtn").onclick = () => { showModal("driveModal", true); refreshDriveStatus(); refreshDriveSpace(); };
+
+const mbFmt = (b) => (Number(b || 0) / 1048576).toFixed(1) + " MB";
+async function refreshDriveSpace() {
+  const el = $("#spaceInfo"); if (!el) return;
+  try {
+    const s = await fetch("/api/drive/space").then((r) => r.json());
+    el.innerHTML =
+      `Local images: <b>${s.localCount}</b> (${mbFmt(s.localBytes)})<br>` +
+      `On Drive, removable now: <b>${s.offloadable}</b> (${mbFmt(s.offloadableBytes)})<br>` +
+      `<small>Drive cache: ${s.cacheCount} file(s), ${mbFmt(s.cacheBytes)} / ${mbFmt(s.cacheLimit)}</small>`;
+    const btn = $("#dOffload"); if (btn) btn.disabled = !s.offloadable;
+  } catch { el.textContent = "Could not read local usage."; }
+}
+// shared progress bar for sync + offload — polls /api/drive/progress while an op runs
+let driveProgT = null;
+function startDriveProgress(label) {
+  const wrap = $("#driveProg"), bar = $("#driveProgBar"), lbl = $("#driveProgLbl");
+  if (!wrap || !$("#driveModal").classList.contains("show")) return;   // no bar for background auto-sync
+  wrap.style.display = "block"; bar.style.width = "0%"; lbl.textContent = label + "…";
+  clearInterval(driveProgT);
+  driveProgT = setInterval(async () => {
+    try {
+      const p = await fetch("/api/drive/progress").then((r) => r.json());
+      if (p && p.total > 0) {
+        const pct = Math.min(100, Math.round((p.done / p.total) * 100));
+        bar.style.width = pct + "%";
+        lbl.textContent = `${label}: ${p.done} / ${p.total} (${pct}%)`;
+      }
+    } catch {}
+  }, 400);
+}
+function stopDriveProgress() {
+  clearInterval(driveProgT); driveProgT = null;
+  const wrap = $("#driveProg"), bar = $("#driveProgBar");
+  if (bar) bar.style.width = "100%";
+  if (wrap) setTimeout(() => { wrap.style.display = "none"; }, 700);
+}
+
+$("#dOffload").onclick = async () => {
+  if (!driveState.connected) { toast("Connect Google Drive first"); return; }
+  if (!confirm("Free up local space?\n\nThis deletes local image files that are already on Drive. Each is verified on Drive first, then removed locally; it will stream back from Drive when viewed. Make sure your last sync finished.")) return;
+  const btn = $("#dOffload"); if (btn) btn.disabled = true;
+  toast("Freeing space… verifying each image on Drive");
+  startDriveProgress("Freeing space");
+  try {
+    const r = await fetch("/api/drive/offload", { method: "POST" }).then((x) => x.json());
+    if (r.error) { toast("Offload error: " + r.error); }
+    else {
+      const extra = r.verifyFailed ? `, kept ${r.verifyFailed} (not verified)` : "";
+      toast(`Freed ${mbFmt(r.freedBytes)} — removed ${r.removed} image(s)${extra}`);
+    }
+  } catch { toast("Offload failed — is the server running?"); }
+  finally { stopDriveProgress(); refreshDriveSpace(); }
+};
+$("#driveCancel").onclick = () => showModal("driveModal", false);
+$("#dConnect").onclick = async () => {
+  const client_id = $("#dClientId").value.trim(), client_secret = $("#dClientSecret").value.trim();
+  if (!client_id || !client_secret) { toast("Enter Client ID and secret"); return; }
+  try {
+    const r = await fetch("/api/drive/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ client_id, client_secret }) }).then((x) => x.json());
+    if (!r.ok) { toast("Config failed"); return; }
+    window.open("/api/drive/connect", "_blank");        // Google consent tab
+    toast("Consent opened — sign in, then return here");
+    drivePoll();                                         // flip UI to connected once consent completes
+  } catch { toast("Config failed — is the server running?"); }
+};
+let drivePollT = null;
+function drivePoll() {
+  let n = 0; clearInterval(drivePollT);
+  drivePollT = setInterval(async () => { n++; await refreshDriveStatus(); if (driveState.connected || n > 40) { clearInterval(drivePollT); if (driveState.connected) toast("Drive connected ✓"); } }, 1500);
+}
+$("#dDisconnect").onclick = async () => {
+  if (!confirm("Disconnect Google Drive? Files already in Drive stay; only the local link is forgotten.")) return;
+  try { await fetch("/api/drive/disconnect", { method: "POST" }); } catch {}
+  await refreshDriveStatus(); toast("Disconnected");
+};
+$("#dAuto").onchange = () => { db.settings.driveAutoSync = $("#dAuto").checked; save(); toast(db.settings.driveAutoSync ? "Auto-sync on" : "Auto-sync off"); };
+$("#dSync").onclick = () => syncDrive(true);
+
+let driveSyncing = false;
+async function syncDrive(manual) {
+  if (driveSyncing) return;
+  if (!driveState.connected) { if (manual) toast("Connect Google Drive first"); return; }
+  driveSyncing = true;
+  if (manual) toast("Syncing to Drive…");
+  startDriveProgress("Syncing");
+  try {
+    const r = await fetch("/api/drive/sync", { method: "POST" }).then((x) => x.json());
+    if (r.busy) { if (manual) toast("A sync is already running…"); }
+    else if (r.error) { toast("Sync error: " + r.error); }
+    else {
+      driveState.lastSync = r.lastSync; driveState.email = r.email || driveState.email; paintDrive();
+      const parts = [];
+      if (r.uploaded) parts.push(r.uploaded + " new");
+      if (r.updated) parts.push(r.updated + " updated");
+      if (r.moved) parts.push(r.moved + " moved");
+      toast("Drive sync ✓ " + (parts.length ? "(" + parts.join(", ") + ")" : "(up to date)"));
+      if ($("#driveModal").classList.contains("show")) refreshDriveSpace();
+    }
+  } catch { if (manual) toast("Sync failed — is the server running?"); }
+  finally { driveSyncing = false; stopDriveProgress(); }
+}
+
+// called after each successful DB save; only fires when connected + auto-sync is on (debounced)
+let autoSyncT = null;
+function maybeAutoSyncDrive() {
+  if (!(db.settings && db.settings.driveAutoSync) || !driveState.connected) return;
+  clearTimeout(autoSyncT);
+  autoSyncT = setTimeout(() => syncDrive(false), 6000);
+}
+refreshDriveStatus();
 
 load();

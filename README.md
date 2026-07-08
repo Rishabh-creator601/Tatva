@@ -33,6 +33,7 @@ One place to dump and organize everything — study notes, screenshots, useful l
 - **Links** — kept in their own `LINKS` carousel per page, optionally grouped by category (`LINKS - {Category}`).
 - **Image & text import** — upload single files or a whole folder; text files render as readable cards.
 - **Export** — write any page or single carousel to `Desktop/Tatva Exports/` as a per-carousel folder tree (images copied, notes as `.txt`, links as `links.txt`).
+- **Google Drive sync** — mirror everything to your own Drive with one click; see [below](#google-drive-sync).
 - **Project manager** — see [below](#project-manager--ignite-integration).
 - **Strict backups** — every save backs up the DB first (last 80 kept); deleted images are moved to a backup folder, never hard-erased.
 - **Dark / light theme.**
@@ -45,6 +46,17 @@ The **Project manager** menu doesn't store anything itself — it pulls projects
 - Each project card carries its own actions (📁 folder · 🧩 VS Code · 🌐 link · 🖥️ app · ⌨️ command). Web links open directly; the rest run through Ignite's local launcher.
 - **🔥 Ignite** fires all of a project's actions at once; **pin/unpin** writes back to Ignite.
 - If Ignite isn't running, the page shows an "Open Ignite ↗" fallback.
+
+## Google Drive sync
+
+An optional, **zero-dependency** backup that mirrors the whole Panel into your own Google Drive (`drive.js`, Node stdlib only). It keeps **one categorized copy** of each note, image, and link — laid out just like an export (`Tatva/sync/{Page}/{Carousel}/…`) — plus a single authoritative `db.json`.
+
+- **One copy, kept in sync** — re-syncing only uploads what changed; renaming or moving a carousel reparents the file in place rather than duplicating it. The local `store/backups/` folder is never uploaded.
+- **Nothing is ever erased** — deleting something in the Panel *moves* its Drive file into `Tatva/deleted/` (preserving its folder path), never hard-deletes it.
+- **Your own app, minimal scope** — auth is OAuth2 via a loopback flow using a Desktop-app client you create once in Google Cloud. The scope is `drive.file`, so the app can only see and manage the files it created (the `Tatva/` tree) — nothing else in your Drive.
+- **Portable state** — the client id/secret, refresh token, and sync manifest live alongside your data as `store/drive-config.json`, `store/drive-token.json`, and `store/drive-sync.json`.
+
+Endpoints (served by `server.js`, backed by `drive.js`): `GET /api/drive/status`, `POST /api/drive/config`, `GET /api/drive/connect` (→ Google consent), `GET /api/drive/callback`, `POST /api/drive/sync`, `POST /api/drive/disconnect`.
 
 ## Running it
 
@@ -68,7 +80,8 @@ node -c panel/public/app.js
 
 ## Architecture
 
-- **`panel/server.js`** — a zero-dependency Node `http` server. Serves the SPA and a small REST API: `GET|POST /api/db`, `GET /api/sysinfo`, `POST /api/export`, image upload/rename/delete, the `/api/ignite-*` proxy to the Ignite panel, and `GET /images/*`.
+- **`panel/server.js`** — a zero-dependency Node `http` server. Serves the SPA and a small REST API: `GET|POST /api/db`, `GET /api/sysinfo`, `POST /api/export`, image upload/rename/delete, the `/api/drive/*` sync routes, the `/api/ignite-*` proxy to the Ignite panel, and `GET /images/*`.
+- **`panel/drive.js`** — independent Google Drive sync engine (Node stdlib only): OAuth2 loopback auth, an incremental categorized mirror of the DB into `Tatva/sync/`, and soft-deletes into `Tatva/deleted/`.
 - **`panel/public/app.js`** — the entire single-page app in one vanilla-JS file (no framework). The client loads the whole DB into memory; every mutation re-POSTs the full DB (debounced), and the server backs up then overwrites.
 - **`panel/public/index.html` / `style.css`** — DOM scaffold (sidebar + main + modals + lightbox) and styling, dark/light via `data-theme`.
 
@@ -78,7 +91,7 @@ node -c panel/public/app.js
 
 ### The portable store
 
-Everything persistent lives in **`panel/store/`** (`db.json` + `seed.json` + `backups/` + `images/`). Copying that one folder transfers the whole system.
+Everything persistent lives in **`panel/store/`** (`db.json` + `seed.json` + `backups/` + `images/`, plus the `drive-*.json` sync state when Drive sync is set up). Copying that one folder transfers the whole system.
 
 > This repository contains the **application code only** — the personal `store/` data, to-do markdown, and one-off migration scripts are intentionally not published.
 
@@ -87,6 +100,7 @@ Everything persistent lives in **`panel/store/`** (`db.json` + `seed.json` + `ba
 ```
 panel/
   server.js            # the Node server + REST API
+  drive.js             # optional Google Drive sync engine
   public/              # the SPA (index.html, app.js, style.css)
   data/
     add-projects-menu.js   # adds the Project manager menu

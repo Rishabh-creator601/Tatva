@@ -7,6 +7,7 @@ const fs = require("fs");
 const path = require("path");
 const os = require("os");
 const { exec } = require("child_process");
+const drive = require("./drive.js");
 
 const ROOT = __dirname;
 const PUBLIC = path.join(ROOT, "public");
@@ -14,13 +15,16 @@ const STORE = path.join(ROOT, "store");        // one portable folder: db + back
 const BACKUPS = path.join(STORE, "backups");
 const IMAGES = path.join(STORE, "images");
 const IMG_BACKUP = path.join(BACKUPS, "images");     // deleted images are moved here (strict backup), never hard-erased
+const IMG_CACHE = path.join(STORE, "images-cache");  // offloaded images fetched from Drive land here (capped LRU cache)
 const DB = path.join(STORE, "db.json");
 const SEED = path.join(STORE, "seed.json");
 const PORT = 4321;
 const MAX_BACKUPS = 80;
+const IMG_CACHE_LIMIT = 120 * 1024 * 1024;   // 120 MB cap for the Drive-image cache (oldest evicted first)
 const IGNITE = "http://localhost:1234";   // the Ignite panel — Project manager pulls its projects live
 
-for (const d of [STORE, BACKUPS, IMAGES, IMG_BACKUP]) fs.mkdirSync(d, { recursive: true });
+for (const d of [STORE, BACKUPS, IMAGES, IMG_BACKUP, IMG_CACHE]) fs.mkdirSync(d, { recursive: true });
+drive.init(STORE);   // independent Google Drive sync (store/drive-*.json)
 
 // If no db yet, copy the seed (first run).
 if (!fs.existsSync(DB)) {
@@ -68,6 +72,22 @@ function backupAndWrite(json) {
     while (files.length > MAX_BACKUPS) fs.unlinkSync(path.join(BACKUPS, files.shift()));
   }
   fs.writeFileSync(DB, JSON.stringify(json, null, 2));
+}
+
+// Cache a Drive-fetched image locally, then evict oldest files while over the size cap (LRU).
+function cacheWrite(name, buf) {
+  try {
+    const dst = path.join(IMG_CACHE, path.basename(name));
+    if (!dst.startsWith(IMG_CACHE)) return;
+    fs.writeFileSync(dst, buf);
+    let entries = fs.readdirSync(IMG_CACHE).map((f) => {
+      try { const s = fs.statSync(path.join(IMG_CACHE, f)); return s.isFile() ? { f, size: s.size, t: s.mtimeMs } : null; } catch { return null; }
+    }).filter(Boolean);
+    let total = entries.reduce((a, e) => a + e.size, 0);
+    if (total <= IMG_CACHE_LIMIT) return;
+    entries.sort((a, b) => a.t - b.t);   // oldest first
+    for (const e of entries) { if (total <= IMG_CACHE_LIMIT) break; try { fs.unlinkSync(path.join(IMG_CACHE, e.f)); total -= e.size; } catch {} }
+  } catch {}
 }
 
 function sendJSON(res, code, obj) {
@@ -261,6 +281,72 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // ---- Google Drive sync (independent; see drive.js) ----
+  //   GET  /api/drive/status                       -> { configured, connected, email, lastSync }
+  //   POST /api/drive/config  {client_id,secret}   -> save OAuth client
+  //   GET  /api/drive/connect                      -> 302 to Google consent
+  //   GET  /api/drive/callback?code=...            -> exchange code, store refresh token
+  //   POST /api/drive/sync                          -> mirror DB into Drive:/Tatva, return counts
+  //   POST /api/drive/disconnect                    -> forget token + manifest
+  if (req.url.startsWith("/api/drive/status") && req.method === "GET") {
+    return sendJSON(res, 200, drive.status());
+  }
+  if (req.url.startsWith("/api/drive/config") && req.method === "POST") {
+    let body = "";
+    req.on("data", (c) => { body += c; if (body.length > 1e5) req.destroy(); });
+    req.on("end", () => {
+      try { const j = JSON.parse(body || "{}"); drive.setConfig(j.client_id, j.client_secret); return sendJSON(res, 200, { ok: true }); }
+      catch (e) { return sendJSON(res, 400, { error: String(e) }); }
+    });
+    return;
+  }
+  if (req.url.startsWith("/api/drive/connect") && req.method === "GET") {
+    try { res.writeHead(302, { Location: drive.authUrl() }); return res.end(); }
+    catch (e) { res.writeHead(400, { "Content-Type": "text/html; charset=utf-8" }); return res.end(`<p>${String(e)}</p><p>Add your Client ID/secret in the Drive Sync panel first.</p>`); }
+  }
+  if (req.url.startsWith("/api/drive/callback") && req.method === "GET") {
+    let code; try { code = new URL(req.url, "http://localhost").searchParams.get("code"); } catch {}
+    const page = (title, msg) => `<!doctype html><meta charset="utf-8"><body style="font-family:system-ui;background:#12131a;color:#eee;display:grid;place-items:center;height:100vh;margin:0"><div style="text-align:center"><h2>${title}</h2><p>${msg}</p><p>You can close this tab and return to the Panel.</p></div></body>`;
+    if (!code) { res.writeHead(400, { "Content-Type": "text/html; charset=utf-8" }); return res.end(page("Drive connect failed", "No authorization code returned.")); }
+    drive.exchangeCode(code)
+      .then((t) => { res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" }); res.end(page("✓ Drive connected", "Signed in as <b>" + (t.email || "your account") + "</b>.")); })
+      .catch((e) => { res.writeHead(500, { "Content-Type": "text/html; charset=utf-8" }); res.end(page("Drive connect failed", String(e))); });
+    return;
+  }
+  if (req.url.startsWith("/api/drive/sync") && req.method === "POST") {
+    try {
+      const db = JSON.parse(fs.readFileSync(DB, "utf8"));
+      drive.sync(db, IMAGES)
+        .then((r) => sendJSON(res, 200, Object.assign({ ok: true }, r)))
+        .catch((e) => sendJSON(res, 500, { error: String(e && e.message || e) }));
+    } catch (e) { sendJSON(res, 500, { error: String(e) }); }
+    return;
+  }
+  if (req.url.startsWith("/api/drive/disconnect") && req.method === "POST") {
+    try { drive.disconnect(); return sendJSON(res, 200, { ok: true }); }
+    catch (e) { return sendJSON(res, 500, { error: String(e) }); }
+  }
+  // live progress for the sync / free-up-space progress bars (polled by the client)
+  if (req.url.startsWith("/api/drive/progress") && req.method === "GET") {
+    return sendJSON(res, 200, drive.getProgress());
+  }
+  // local-disk usage report for the "Free up space" UI (local images + cache; no Drive calls)
+  if (req.url.startsWith("/api/drive/space") && req.method === "GET") {
+    try {
+      const info = drive.spaceInfo(IMAGES);
+      let cacheBytes = 0, cacheCount = 0;
+      try { for (const f of fs.readdirSync(IMG_CACHE)) { const s = fs.statSync(path.join(IMG_CACHE, f)); if (s.isFile()) { cacheBytes += s.size; cacheCount++; } } } catch {}
+      return sendJSON(res, 200, Object.assign(info, { cacheBytes, cacheCount, cacheLimit: IMG_CACHE_LIMIT }));
+    } catch (e) { return sendJSON(res, 500, { error: String(e) }); }
+  }
+  // free up space: delete local originals confirmed present on Drive (verified per-file first)
+  if (req.url.startsWith("/api/drive/offload") && req.method === "POST") {
+    drive.offload(IMAGES)
+      .then((r) => sendJSON(res, 200, Object.assign({ ok: true }, r)))
+      .catch((e) => sendJSON(res, 500, { error: String(e && e.message || e) }));
+    return;
+  }
+
   // upload an image (or text) file for Subjects -> store/images
   if (req.url.startsWith("/api/upload-image") && req.method === "POST") {
     let body = "";
@@ -346,16 +432,28 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // serve uploaded images
+  // serve uploaded images: local original -> local cache -> stream from Drive (offloaded)
   if (req.url.startsWith("/images/")) {
     const name = path.basename(decodeURIComponent(req.url.split("?")[0]));
     const f = path.join(IMAGES, name);
     if (!f.startsWith(IMAGES)) { res.writeHead(403); return res.end("forbidden"); }
-    return fs.readFile(f, (err, data) => {
-      if (err) { res.writeHead(404); return res.end("not found"); }
-      res.writeHead(200, { "Content-Type": MIME[path.extname(f).toLowerCase()] || "application/octet-stream", "Cache-Control": "no-store" });
-      res.end(data);
-    });
+    const ctype = MIME[path.extname(f).toLowerCase()] || "application/octet-stream";
+    const sendBuf = (data) => { res.writeHead(200, { "Content-Type": ctype, "Cache-Control": "no-store" }); res.end(data); };
+    // 1) local original
+    if (fs.existsSync(f)) return fs.readFile(f, (err, data) => { if (err) { res.writeHead(404); return res.end("not found"); } sendBuf(data); });
+    // 2) local cache (offloaded but fetched before) — touch mtime so it stays "recently used"
+    const cf = path.join(IMG_CACHE, name);
+    if (cf.startsWith(IMG_CACHE) && fs.existsSync(cf)) {
+      try { const now = new Date(); fs.utimesSync(cf, now, now); } catch {}
+      return fs.readFile(cf, (err, data) => { if (err) { res.writeHead(404); return res.end("not found"); } sendBuf(data); });
+    }
+    // 3) offloaded — fetch bytes from Drive, cache, serve
+    const driveId = drive.driveIdForFile(name);
+    if (!driveId) { res.writeHead(404); return res.end("not found"); }
+    drive.downloadMedia(driveId)
+      .then((buf) => { cacheWrite(name, buf); sendBuf(buf); })
+      .catch(() => { res.writeHead(502); res.end("drive fetch failed"); });
+    return;
   }
 
   serveStatic(req, res);

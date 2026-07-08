@@ -13,6 +13,7 @@
     <button class="quickview" id="quickView">📥 Quick items <span class="ct" id="quickCt">0</span></button>
     <div id="nav"></div>
     <div class="foot">
+      <button class="toggle" id="driveBtn">☁ Drive Sync</button>
       <button class="toggle" id="themeBtn">🌙 Theme</button>
     </div>
   </aside>
@@ -186,6 +187,47 @@
       <div class="actions">
         <button class="btn" id="goalsCancel">Cancel</button>
         <button class="btn primary" id="goalsSave">Add goals</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Google Drive sync -->
+  <div class="modal" id="driveModal">
+    <div class="sheet">
+      <h2>☁ Google Drive Sync</h2>
+      <div class="drivestatus" id="driveStatus">Checking…</div>
+
+      <div id="driveConnected" style="display:none">
+        <div id="driveProg" style="display:none;margin:10px 0">
+          <div class="progwrap"><div class="progbar" id="driveProgBar"></div></div>
+          <div class="hint" id="driveProgLbl" style="margin-top:5px"></div>
+        </div>
+        <label style="display:flex;align-items:center;gap:8px;margin-top:6px"><input type="checkbox" id="dAuto" style="width:auto" /> Auto-sync after every change (debounced)</label>
+        <div class="hint">Live data mirrors to <code>Tatva/sync/</code> (one categorized copy of each thing); anything you delete is moved to <code>Tatva/deleted/</code>. Local backups are never uploaded.</div>
+        <div class="actions" style="justify-content:space-between">
+          <button class="btn danger" id="dDisconnect">Disconnect</button>
+          <button class="btn primary" id="dSync">⟳ Sync now</button>
+        </div>
+
+        <div id="driveSpace" style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line)">
+          <div class="hint" style="margin-top:0"><b>Free up local space.</b> Removes local image files that are already on Drive — they stream back from Drive when you view them (and are cached briefly). New images stay local until your next sync.</div>
+          <div class="drivestatus" id="spaceInfo" style="margin-top:8px">Checking local usage…</div>
+          <div class="actions" style="justify-content:flex-end">
+            <button class="btn" id="dOffload">🧹 Free up space</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="driveSetup">
+        <div class="hint" style="margin-top:2px">One-time setup — create a Google Cloud <b>OAuth client (Desktop app)</b> with the <b>Google Drive API</b> enabled, then paste its credentials below and Connect (sign in as <code>rishabhagarwal1028@gmail.com</code>).</div>
+        <label>Client ID</label>
+        <input id="dClientId" placeholder="xxxxxxxx.apps.googleusercontent.com" autocomplete="off" />
+        <label>Client secret</label>
+        <input id="dClientSecret" placeholder="GOCSPX-…" autocomplete="off" />
+        <div class="actions">
+          <button class="btn" id="driveCancel">Close</button>
+          <button class="btn primary" id="dConnect">Save &amp; Connect</button>
+        </div>
       </div>
     </div>
   </div>
